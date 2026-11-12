@@ -30,7 +30,7 @@ import (
 // if time duration less than 10s, can produce inaccurate data
 const freshContainerMinMetricsResolution = 10 * time.Second
 
-// nodeStorage stores last two pod metric batches and calculates cpu & memory usage
+// podStorage stores last two pod metric batches and calculates cpu & memory usage.
 //
 // This implementation only stores metric points if they are newer than the
 // points already stored and the cpuUsageOverTime function used to handle
@@ -121,7 +121,7 @@ func (s *podStorage) Store(newPods *MetricsBatch) {
 			if newPoint.StartTime.Before(newPoint.Timestamp) && newPoint.Timestamp.Sub(newPoint.StartTime) < s.metricResolution && newPoint.Timestamp.Sub(newPoint.StartTime) >= freshContainerMinMetricsResolution {
 				copied := newPoint
 				copied.Timestamp = newPoint.StartTime
-				copied.CumulativeCpuUsed = 0
+				copied.CumulativeCPUUsed = 0
 				newPrevPod.Containers[containerName] = copied
 			} else if lastPod, found := s.last[podRef]; found {
 				// Keep previous metric point if newPoint has not restarted (new metric start time < stored timestamp)

@@ -16,6 +16,7 @@ package api
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -25,6 +26,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/metrics/pkg/apis/metrics"
 	"k8s.io/metrics/pkg/apis/metrics/install"
+	v1 "k8s.io/metrics/pkg/apis/metrics/v1"
 	"k8s.io/metrics/pkg/apis/metrics/v1beta1"
 )
 
@@ -48,13 +50,14 @@ func Build(pod, node rest.Storage) genericapiserver.APIGroupInfo {
 		"pods":  pod,
 	}
 	apiGroupInfo.VersionedResourcesStorageMap[v1beta1.SchemeGroupVersion.Version] = metricsServerResources
+	apiGroupInfo.VersionedResourcesStorageMap[v1.SchemeGroupVersion.Version] = metricsServerResources
 
 	return apiGroupInfo
 }
 
 // Install builds the metrics for the metrics.k8s.io API, and then installs it into the given API metrics-server.
-func Install(m MetricsGetter, podMetadataLister cache.GenericLister, nodeLister corev1.NodeLister, server *genericapiserver.GenericAPIServer) error {
-	node := newNodeMetrics(metrics.Resource("nodemetrics"), m, nodeLister)
+func Install(m MetricsGetter, podMetadataLister cache.GenericLister, nodeLister corev1.NodeLister, server *genericapiserver.GenericAPIServer, nodeSelector []labels.Requirement) error {
+	node := newNodeMetrics(metrics.Resource("nodemetrics"), m, nodeLister, nodeSelector)
 	pod := newPodMetrics(metrics.Resource("podmetrics"), m, podMetadataLister)
 	info := Build(pod, node)
 	return server.InstallAPIGroup(&info)

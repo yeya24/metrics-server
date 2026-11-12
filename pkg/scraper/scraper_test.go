@@ -21,17 +21,17 @@ import (
 	"testing"
 	"time"
 
-	"sigs.k8s.io/metrics-server/pkg/scraper/client"
-
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	apitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/component-base/metrics/testutil"
 
+	"sigs.k8s.io/metrics-server/pkg/scraper/client"
 	"sigs.k8s.io/metrics-server/pkg/storage"
 )
 
@@ -44,13 +44,14 @@ func TestScraper(t *testing.T) {
 
 var _ = Describe("Scraper", func() {
 	var (
-		scrapeTime = time.Now()
-		nodeLister fakeNodeLister
-		client     fakeKubeletClient
-		node1      = makeNode("node1", "node1.somedomain", "10.0.1.2", true)
-		node2      = makeNode("node-no-host", "", "10.0.1.3", true)
-		node3      = makeNode("node3", "node3.somedomain", "10.0.1.4", false)
-		node4      = makeNode("node4", "node4.somedomain", "10.0.1.5", true)
+		scrapeTime       = time.Now()
+		nodeLister       fakeNodeLister
+		client           fakeKubeletClient
+		labelRequirement []labels.Requirement
+		node1            = makeNode("node1", "node1.somedomain", "10.0.1.2", true)
+		node2            = makeNode("node-no-host", "", "10.0.1.3", true)
+		node3            = makeNode("node3", "node3.somedomain", "10.0.1.4", false)
+		node4            = makeNode("node4", "node4.somedomain", "10.0.1.5", true)
 	)
 	BeforeEach(func() {
 		mb := &storage.MetricsBatch{
@@ -91,6 +92,8 @@ var _ = Describe("Scraper", func() {
 				node4: {Nodes: map[string]storage.MetricsPoint{node4.Name: metricPoint(100, 200, scrapeTime)}},
 			},
 		}
+
+		labelRequirement, _ = labels.ParseToRequirements("metrics-server-skip!=true")
 	})
 
 	Context("when all nodes return in time", func() {
@@ -100,7 +103,7 @@ var _ = Describe("Scraper", func() {
 
 			By("running the scraper with a context timeout of 3*seconds")
 			start := time.Now()
-			scraper := NewScraper(&nodeLister, &client, 3*time.Second)
+			scraper := NewScraper(&nodeLister, &client, 3*time.Second, labelRequirement)
 			timeoutCtx, doneWithWork := context.WithTimeout(context.Background(), 4*time.Second)
 			dataBatch := scraper.Scrape(timeoutCtx)
 			doneWithWork()
@@ -123,7 +126,7 @@ var _ = Describe("Scraper", func() {
 
 			By("running the source scraper with a scrape timeout of 3 seconds")
 			start := time.Now()
-			scraper := NewScraper(&nodeLister, &client, 3*time.Second)
+			scraper := NewScraper(&nodeLister, &client, 3*time.Second, labelRequirement)
 			dataBatch := scraper.Scrape(context.Background())
 
 			By("ensuring that scraping took around 3 seconds")
@@ -140,7 +143,7 @@ var _ = Describe("Scraper", func() {
 
 			By("running the source scraper with a scrape timeout of 5 seconds, but a context timeout of 1 second")
 			start := time.Now()
-			scraper := NewScraper(&nodeLister, &client, 5*time.Second)
+			scraper := NewScraper(&nodeLister, &client, 5*time.Second, labelRequirement)
 			timeoutCtx, doneWithWork := context.WithTimeout(context.Background(), 1*time.Second)
 			dataBatch := scraper.Scrape(timeoutCtx)
 			doneWithWork()
@@ -166,7 +169,7 @@ var _ = Describe("Scraper", func() {
 		}
 		nodes := fakeNodeLister{nodes: []*corev1.Node{node1}}
 
-		scraper := NewScraper(&nodes, &client, 3*time.Second)
+		scraper := NewScraper(&nodes, &client, 3*time.Second, labelRequirement)
 		scraper.Scrape(context.Background())
 
 		err := testutil.CollectAndCompare(requestDuration, strings.NewReader(`
@@ -208,7 +211,7 @@ var _ = Describe("Scraper", func() {
 		By("deleting node")
 		nodeLister.nodes[0].Status.Addresses = nil
 		delete(client.metrics, node1)
-		scraper := NewScraper(&nodeLister, &client, 5*time.Second)
+		scraper := NewScraper(&nodeLister, &client, 5*time.Second, labelRequirement)
 
 		By("running the scraper")
 		dataBatch := scraper.Scrape(context.Background())
@@ -219,17 +222,92 @@ var _ = Describe("Scraper", func() {
 	It("should gracefully handle list errors", func() {
 		By("setting a fake error from the lister")
 		nodeLister.listErr = fmt.Errorf("something went wrong, expectedly")
-		scraper := NewScraper(&nodeLister, &client, 5*time.Second)
+		scraper := NewScraper(&nodeLister, &client, 5*time.Second, labelRequirement)
 
 		By("running the scraper")
 		scraper.Scrape(context.Background())
+	})
+
+	It("should remove per-node metrics when a node is removed", func() {
+		requestDuration.Create(nil)
+		lastRequestTime.Create(nil)
+		requestDuration.Reset()
+		lastRequestTime.Reset()
+
+		myClock = mockClock{
+			now:   time.Time{},
+			later: time.Time{}.Add(time.Second),
+		}
+		nodes := fakeNodeLister{nodes: []*corev1.Node{node1}}
+		scraper := NewScraper(&nodes, &client, 3*time.Second, labelRequirement)
+
+		By("scraping a single node")
+		scraper.Scrape(context.Background())
+
+		err := testutil.CollectAndCompare(lastRequestTime, strings.NewReader(`
+		# HELP metrics_server_kubelet_last_request_time_seconds [ALPHA] Time of last request performed to Kubelet API since unix epoch in seconds
+		# TYPE metrics_server_kubelet_last_request_time_seconds gauge
+		metrics_server_kubelet_last_request_time_seconds{node="node1"} -6.21355968e+10
+		`), "metrics_server_kubelet_last_request_time_seconds")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("removing the node metrics via a Node object")
+		scraper.RemoveNodeMetrics(node1)
+
+		err = testutil.CollectAndCompare(lastRequestTime, strings.NewReader(`
+		# HELP metrics_server_kubelet_last_request_time_seconds [ALPHA] Time of last request performed to Kubelet API since unix epoch in seconds
+		# TYPE metrics_server_kubelet_last_request_time_seconds gauge
+		`), "metrics_server_kubelet_last_request_time_seconds")
+		Expect(err).NotTo(HaveOccurred())
+
+		err = testutil.CollectAndCompare(requestDuration, strings.NewReader(`
+		# HELP metrics_server_kubelet_request_duration_seconds [ALPHA] Duration of requests to Kubelet API in seconds
+		# TYPE metrics_server_kubelet_request_duration_seconds histogram
+		`), "metrics_server_kubelet_request_duration_seconds")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("scraping again to repopulate metrics")
+		scraper.Scrape(context.Background())
+
+		err = testutil.CollectAndCompare(lastRequestTime, strings.NewReader(`
+		# HELP metrics_server_kubelet_last_request_time_seconds [ALPHA] Time of last request performed to Kubelet API since unix epoch in seconds
+		# TYPE metrics_server_kubelet_last_request_time_seconds gauge
+		metrics_server_kubelet_last_request_time_seconds{node="node1"} -6.21355968e+10
+		`), "metrics_server_kubelet_last_request_time_seconds")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("removing the node metrics via a tombstone object")
+		scraper.RemoveNodeMetrics(cache.DeletedFinalStateUnknown{Obj: node1})
+
+		err = testutil.CollectAndCompare(lastRequestTime, strings.NewReader(`
+		# HELP metrics_server_kubelet_last_request_time_seconds [ALPHA] Time of last request performed to Kubelet API since unix epoch in seconds
+		# TYPE metrics_server_kubelet_last_request_time_seconds gauge
+		`), "metrics_server_kubelet_last_request_time_seconds")
+		Expect(err).NotTo(HaveOccurred())
+
+		err = testutil.CollectAndCompare(requestDuration, strings.NewReader(`
+		# HELP metrics_server_kubelet_request_duration_seconds [ALPHA] Duration of requests to Kubelet API in seconds
+		# TYPE metrics_server_kubelet_request_duration_seconds histogram
+		`), "metrics_server_kubelet_request_duration_seconds")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("ignoring invalid deletion objects")
+		scraper.Scrape(context.Background())
+		scraper.RemoveNodeMetrics("not a node")
+
+		err = testutil.CollectAndCompare(lastRequestTime, strings.NewReader(`
+		# HELP metrics_server_kubelet_last_request_time_seconds [ALPHA] Time of last request performed to Kubelet API since unix epoch in seconds
+		# TYPE metrics_server_kubelet_last_request_time_seconds gauge
+		metrics_server_kubelet_last_request_time_seconds{node="node1"} -6.21355968e+10
+		`), "metrics_server_kubelet_last_request_time_seconds")
+		Expect(err).NotTo(HaveOccurred())
 	})
 })
 
 func metricPoint(cpu, memory uint64, time time.Time) storage.MetricsPoint {
 	return storage.MetricsPoint{
 		Timestamp:         time,
-		CumulativeCpuUsed: cpu,
+		CumulativeCPUUsed: cpu,
 		MemoryUsage:       memory,
 	}
 }

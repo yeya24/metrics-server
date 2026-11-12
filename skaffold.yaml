@@ -1,4 +1,4 @@
-apiVersion: skaffold/v2beta14
+apiVersion: skaffold/v2beta29
 kind: Config
 metadata:
   name: metrics-server
@@ -7,32 +7,39 @@ build:
     useDockerCLI: true
     useBuildkit: true
   artifacts:
-  - image: gcr.io/k8s-staging-metrics-server/metrics-server
-    docker:
-      dockerfile: Dockerfile
-      buildArgs:
-        ARCH: "amd64"
-        GIT_TAG: "devel"
-deploy:
-  kustomize:
-    paths:
-    - manifests/test
+    - image: us-central1-docker.pkg.dev/k8s-staging-images/metrics-server/metrics-server
+      docker:
+        dockerfile: Dockerfile
+        buildArgs:
+          ARCH: "amd64"
+          GIT_TAG: "devel"
+          GOLANG_VERSION: '{{cmd "make" "-s" "--no-print-directory" "print-golang-version"}}'
+
 profiles:
+  - name: test
+    deploy:
+      kustomize:
+        paths:
+          - manifests/overlays/test
   - name: test-ha
     deploy:
       kustomize:
         paths:
-        - manifests/test-ha
+          - manifests/overlays/test-ha
   - name: helm
     deploy:
       helm:
         releases:
           - name: metrics-server
+            namespace: kube-system
             artifactOverrides:
-              imageKey: gcr.io/k8s-staging-metrics-server/metrics-server
+              imageKey: us-central1-docker.pkg.dev/k8s-staging-images/metrics-server/metrics-server
             chartPath: charts/metrics-server
             setValueTemplates:
               image.repository: "{{.IMAGE_REPO}}"
               image.tag: "{{.IMAGE_TAG}}"
+            setValues:
+              podLabels: { k8s-app: metrics-server }
+              containerPort: 10250
             valuesFiles:
-              - charts/metrics-server/ci/ci-values.yaml
+              - test/chart-values.yaml

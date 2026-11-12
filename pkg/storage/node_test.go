@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
@@ -36,14 +36,14 @@ var _ = Describe("Node storage", func() {
 		s.Store(nodeMetricBatch(nodeMetricsPoint{"node1", newMetricsPoint(nodeStart, nodeStart.Add(10*time.Second), 10*CoreSecond, 2*MiByte)}))
 
 		By("waiting for second batch before becoming ready and serving metrics")
-		Expect(s.Ready()).NotTo(BeTrue())
+		Expect(s.NodeReady()).To(BeFalse())
 		checkNodeResponseEmpty(s, "node1")
 
 		By("storing second batch with node1 metrics")
 		s.Store(nodeMetricBatch(nodeMetricsPoint{"node1", newMetricsPoint(nodeStart, nodeStart.Add(20*time.Second), 20*CoreSecond, 3*MiByte)}))
 
 		By("becoming ready and returning metric for node1")
-		Expect(s.Ready()).To(BeTrue())
+		Expect(s.NodeReady()).To(BeTrue())
 		ms, err := s.GetNodeMetrics(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ms).To(HaveLen(1))
@@ -76,7 +76,7 @@ var _ = Describe("Node storage", func() {
 
 		By("should not be ready and return empty result for node1")
 		checkNodeResponseEmpty(s, "node1")
-		Expect(s.Ready()).NotTo(BeTrue())
+		Expect(s.NodeReady()).To(BeFalse())
 	})
 	It("exposes correct node metrics", func() {
 		pointsStored.Create(nil)
@@ -136,7 +136,7 @@ var _ = Describe("Node storage", func() {
 		By("should get empty metrics when cpu metrics decrease")
 		checkNodeResponseEmpty(s, "node1")
 	})
-	It("should handle metrics older then prev", func() {
+	It("should handle metrics older than prev", func() {
 		s := NewStorage(60 * time.Second)
 		nodeStart := time.Now()
 
@@ -146,7 +146,7 @@ var _ = Describe("Node storage", func() {
 		By("storing last metrics")
 		s.Store(nodeMetricBatch(nodeMetricsPoint{"node1", newMetricsPoint(nodeStart, nodeStart.Add(35*time.Second), 50*CoreSecond, 5*MiByte)}))
 
-		By("Storing new metrics older then previous")
+		By("Storing new metrics older than previous")
 		s.Store(nodeMetricBatch(nodeMetricsPoint{"node1", newMetricsPoint(nodeStart, nodeStart.Add(5*time.Second), 6*CoreSecond, 2*MiByte)}))
 
 		By("should get empty metrics after stored older metrics than previous")
@@ -188,14 +188,14 @@ var _ = Describe("Node storage", func() {
 		s.Store(nodeMetricBatch(nodeMetricsPoint{"node1", newMetricsPoint(time.Time{}, nodeStart.Add(10*time.Second), 10*CoreSecond, 2*MiByte)}))
 
 		By("waiting for second batch before becoming ready and serving metrics")
-		Expect(s.Ready()).NotTo(BeTrue())
+		Expect(s.NodeReady()).To(BeFalse())
 		checkNodeResponseEmpty(s, "node1")
 
 		By("storing second batch with node1 metrics")
 		s.Store(nodeMetricBatch(nodeMetricsPoint{"node1", newMetricsPoint(time.Time{}, nodeStart.Add(20*time.Second), 20*CoreSecond, 3*MiByte)}))
 
 		By("becoming ready and returning metric for node1")
-		Expect(s.Ready()).To(BeTrue())
+		Expect(s.NodeReady()).To(BeTrue())
 		ms, err := s.GetNodeMetrics(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ms).Should(HaveLen(1))

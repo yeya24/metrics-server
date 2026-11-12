@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
@@ -144,12 +144,9 @@ func BenchmarkStorageWrite(b *testing.B) {
 func benchmarkStorageWrite(b *testing.B, g *generator) {
 	s := NewStorage(60 * time.Second)
 	// Limit size to limit memory needed
-	maxSize := 100
-	if maxSize > b.N {
-		maxSize = b.N
-	}
+	maxSize := min(100, b.N)
 	bs := make([]*MetricsBatch, 0, maxSize)
-	for i := 0; i < maxSize; i++ {
+	for range maxSize {
 		bs = append(bs, g.NewBatch())
 	}
 	b.ResetTimer()
@@ -227,17 +224,19 @@ func benchmarkStorageReadNode(b *testing.B, g *generator) {
 }
 
 type generator struct {
-	containerPerPod int
-	nodePods        map[string][]string
-	deploymentPods  map[string][]string
-	podNamespace    map[string]string
-	rand            *rand.Rand
+	containerPerPod   int
+	nodePods          map[string][]string
+	deploymentPods    map[string][]string
+	podNamespace      map[string]string
+	rand              *rand.Rand
+	cumulativeCPUUsed uint64
 }
 
 func newGenerator(rand *rand.Rand, s scenario) *generator {
 	g := generator{
-		rand:            rand,
-		containerPerPod: s.containerPerPod,
+		rand:              rand,
+		containerPerPod:   s.containerPerPod,
+		cumulativeCPUUsed: 0,
 	}
 
 	podCount := s.podsPerNode * s.nodeCount
@@ -348,9 +347,10 @@ func (g *generator) RandomString(length int) string {
 }
 
 func (g *generator) RandomMetricsPoint() MetricsPoint {
+	g.cumulativeCPUUsed += uint64(g.rand.Int63n(1e8))
 	return MetricsPoint{
 		Timestamp:         time.Now(),
-		CumulativeCpuUsed: g.rand.Uint64(),
+		CumulativeCPUUsed: g.cumulativeCPUUsed,
 		MemoryUsage:       g.rand.Uint64(),
 	}
 }

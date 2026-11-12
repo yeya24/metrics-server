@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/client-go/tools/cache"
@@ -36,7 +37,7 @@ var (
 	// initialized below to an actual value by a call to RegisterTickDuration
 	// (acts as a no-op by default), but we can't just register it in the constructor,
 	// since it could be called multiple times during setup.
-	tickDuration *metrics.Histogram = metrics.NewHistogram(&metrics.HistogramOpts{})
+	tickDuration = metrics.NewHistogram(&metrics.HistogramOpts{})
 )
 
 // RegisterServerMetrics creates and registers a histogram metric for
@@ -107,7 +108,7 @@ func (s *server) RunUntil(stopCh <-chan struct{}) error {
 
 	// Start serving API and scrape loop
 	go s.runScrape(ctx)
-	return s.GenericAPIServer.PrepareRun().Run(stopCh)
+	return s.GenericAPIServer.PrepareRun().RunWithContext(wait.ContextForChannel(stopCh))
 }
 
 func (s *server) runScrape(ctx context.Context) {
@@ -149,6 +150,10 @@ func (s *server) RegisterProbes(waiter cacheSyncWaiter) error {
 	if err != nil {
 		return err
 	}
+	err = s.AddReadyzChecks(s.probeMetricCacheHasSynced("metric-informer-sync"))
+	if err != nil {
+		return err
+	}
 	err = s.AddLivezChecks(0, s.probeMetricCollectionTimely("metric-collection-timely"))
 	if err != nil {
 		return err
@@ -184,6 +189,23 @@ func (s *server) probeMetricStorageReady(name string) healthz.HealthChecker {
 	return healthz.NamedCheck(name, func(r *http.Request) error {
 		if !s.storage.Ready() {
 			err := fmt.Errorf("no metrics to serve")
+			klog.InfoS("Failed probe", "probe", name, "err", err)
+			return err
+		}
+		return nil
+	})
+}
+
+// Check if MS is ready by checking if cache has synced
+func (s *server) probeMetricCacheHasSynced(name string) healthz.HealthChecker {
+	return healthz.NamedCheck(name, func(r *http.Request) error {
+		if !s.nodes.HasSynced() {
+			err := fmt.Errorf("cache for node informer has not synced")
+			klog.InfoS("Failed probe", "probe", name, "err", err)
+			return err
+		}
+		if !s.pods.HasSynced() {
+			err := fmt.Errorf("cache for pod informer has not synced")
 			klog.InfoS("Failed probe", "probe", name, "err", err)
 			return err
 		}

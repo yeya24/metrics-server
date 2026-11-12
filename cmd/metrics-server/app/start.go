@@ -22,10 +22,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"k8s.io/client-go/pkg/version"
-
 	cliflag "k8s.io/component-base/cli/flag"
+	"k8s.io/component-base/logs"
 	"k8s.io/component-base/term"
-	"k8s.io/klog/v2"
 
 	"sigs.k8s.io/metrics-server/cmd/metrics-server/app/options"
 )
@@ -33,7 +32,6 @@ import (
 // NewMetricsServerCommand provides a CLI handler for the metrics server entrypoint
 func NewMetricsServerCommand(stopCh <-chan struct{}) *cobra.Command {
 	opts := options.NewOptions()
-
 	cmd := &cobra.Command{
 		Short: "Launch metrics-server",
 		Long:  "Launch metrics-server",
@@ -50,7 +48,16 @@ func NewMetricsServerCommand(stopCh <-chan struct{}) *cobra.Command {
 		fs.AddFlagSet(f)
 	}
 	local := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	klog.InitFlags(local)
+	logs.AddGoFlags(local)
+
+	// Opt into the new klog behavior so that -stderrthreshold is honored even
+	// when -logtostderr=true (the default).  Without this, all log levels are
+	// unconditionally sent to stderr, making it impossible for log-aggregation
+	// systems to filter by severity.
+	// Ref: kubernetes/klog#212, kubernetes/klog#432
+	local.Set("legacy_stderr_threshold_behavior", "false") //nolint:errcheck
+	local.Set("stderrthreshold", "INFO")                   //nolint:errcheck
+
 	nfs.FlagSet("logging").AddGoFlagSet(local)
 
 	usageFmt := "Usage:\n  %s\n"
@@ -64,6 +71,7 @@ func NewMetricsServerCommand(stopCh <-chan struct{}) *cobra.Command {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s\n\n"+usageFmt, cmd.Long, cmd.UseLine())
 		cliflag.PrintSections(cmd.OutOrStdout(), nfs, cols)
 	})
+	fs.AddGoFlagSet(local)
 	return cmd
 }
 

@@ -2,23 +2,31 @@
 
 The Metrics Server is released on an as-needed basis. The process is as follows:
 
-1. An issue is proposing a new release with a changelog since the last release
+1. An issue is proposing a new release with a changelog since the last release <https://github.com/kubernetes-sigs/metrics-server/compare>
 1. At least one [OWNER](OWNERS) must LGTM this release
 1. A PR that bumps version hardcoded in code is created and merged
 1. An OWNER creates a draft GitHub release
 1. An OWNER creates an issue to release the corresponding Helm chart via the chart release process (below)
-1. An OWNER creates a release tag using `GIT_TAG=$VERSION make release-tag` and waits for [prow.k8s.io](prow.k8s.io) to build and push new images to [gcr.io/k8s-staging-metrics-server](https://gcr.io/k8s-staging-metrics-server)
-1. An OWNER builds the release manifests using `make release-manifests` and uploads them to Github release
-1. A PR in [kubernetes/k8s.io](https://github.com/kubernetes/k8s.io/blob/main/k8s.gcr.io/images/k8s-staging-metrics-server/images.yaml) is created to release images to `k8s.gcr.io`
+1. An OWNER creates a release tag using `GIT_TAG=$VERSION make release-tag` and waits for [prow.k8s.io](prow.k8s.io) to build and push new images to `us-central1-docker.pkg.dev/k8s-staging-images/metrics-server`
+1. A PR in [kubernetes/k8s.io](https://github.com/kubernetes/k8s.io/blob/main/registry.k8s.io/images/k8s-staging-metrics-server/images.yaml) is created to release images to `registry.k8s.io`
 1. An OWNER publishes the GitHub release. Once published, release manifests will be automatically added to the release by CI.
 1. An announcement email is sent to `kubernetes-sig-instrumentation@googlegroups.com` with the subject `[ANNOUNCE] metrics-server $VERSION is released`
 1. The release issue is closed
 
 ## Chart Release Process
 
-The chart needs to be released in response to a Metrics Server release or on an as-needed basis. The process is as follows:
+A new chart should be released whenever a new version of Metrics Server is
+released, but releases can also be done on an as-needed basis. Most chart
+releases for the latest Metrics Server version can take place on the `master`
+branch. However, if a release is a backport or the chart on `master` is no longer
+compatible, the PR should target the release branch.
+
+The chart release process is as follows:
 
 1. An issue is proposing a new chart release
-1. A PR is opened to update _Chart.yaml_ with the `appVersion`, `version` (based on the release changes) and `annotations`
+1. The issue is used to document the release process
+1. A PR is opened to update _Chart.yaml_ with the `appVersion`, `version`
 1. The PR triggers the chart linting and testing GitHub action to validate the chart
 1. The PR is merged and a GitHub action releases the chart
+
+If the release has happened on a release branch the issue will need manually closing.
